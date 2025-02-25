@@ -7,7 +7,7 @@ import os
 import json
 import pytz
 
-# Configuración de Google Sheets con secreto desde variable de entorno
+# Configuración de Google Sheets con secreto desde variable de entorno - prueba
 scope = ["https://spreadsheets.google.com/feeds", "https://www.googleapis.com/auth/drive"]
 creds_json = os.getenv('GOOGLE_CREDENTIALS')
 creds_dict = json.loads(creds_json)
