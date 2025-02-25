@@ -3,11 +3,13 @@ name: Update Merval Sheet
 on:
   schedule:
     - cron: '*/15 * * * *'  # Cada 15 minutos
-  workflow_dispatch:  # Permite ejecución manual
+  workflow_dispatch:
 
 jobs:
   update-sheet:
     runs-on: ubuntu-latest
+    env:
+      GOOGLE_CREDENTIALS: ${{ secrets.GOOGLE_CREDENTIALS }}
     steps:
       - name: Checkout repository
         uses: actions/checkout@v3
@@ -21,12 +23,6 @@ jobs:
         run: |
           python -m pip install --upgrade pip
           pip install -r requirements.txt
-
-      - name: Write credentials.json
-        run: |
-          echo "${{ secrets.GOOGLE_CREDENTIALS }}" > credentials.json
-          cat credentials.json  # Para inspeccionar el archivo en los logs
-          python -c 'import json; json.load(open("credentials.json"))'  # Validar JSON
 
       - name: Run script
         run: python analisis_merval.py
