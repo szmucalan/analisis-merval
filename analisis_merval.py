@@ -6,19 +6,27 @@ from datetime import datetime, timedelta
 import os
 import json
 import pytz
+import sys
+import traceback
 
 # Configuración de Google Sheets
 scope = ["https://spreadsheets.google.com/feeds", "https://www.googleapis.com/auth/drive"]
 creds_json = os.getenv('GOOGLE_CREDENTIALS')
-creds_dict = json.loads(creds_json)
-creds = ServiceAccountCredentials.from_json_keyfile_dict(creds_dict, scope)
-client = gspread.authorize(creds)
-sheet = client.open_by_key('1VxrU9jQnBoShNWY1zfbMSFCWc-tISgolOGm-zUbY_4Q')
-data_sheet = sheet.sheet1
+print("Credenciales obtenidas del entorno:", creds_json[:50] if creds_json else "No se encontraron credenciales")
+try:
+    creds_dict = json.loads(creds_json)
+    creds = ServiceAccountCredentials.from_json_keyfile_dict(creds_dict, scope)
+    client = gspread.authorize(creds)
+    sheet = client.open_by_key('1VxrU9jQnBoShNWY1zfbMSFCWc-tISgolOGm-zUbY_4Q')
+    data_sheet = sheet.sheet1
+except Exception as e:
+    print(f"Error al inicializar Google Sheets: {e}")
+    sys.exit(1)
 
 # Zona horaria de Buenos Aires
 buenos_aires_tz = pytz.timezone('America/Argentina/Buenos_Aires')
 now = datetime.now(buenos_aires_tz)
+print(f"Hora actual en ART: {now.strftime('%Y-%m-%d %H:%M:%S')}")
 
 # Verificar horario de trading (Lunes a Viernes, 11:00-18:00 ART)
 weekday = now.weekday()
@@ -30,8 +38,9 @@ if weekday >= 5 or hour < 11 or hour >= 18:
 # Verificación de última actualización
 try:
     last_update_str = data_sheet.acell('A1').value
-    if last_update_str.startswith('*Última actualización*: '):
-        last_update_str = last_update_str.replace('*Última actualización*: ', '')
+    print(f"Última actualización encontrada en A1: {last_update_str}")
+    if last_update_str and last_update_str.startswith('Última actualización: '):
+        last_update_str = last_update_str.replace('Última actualización: ', '')
     last_update = datetime.strptime(last_update_str, "%Y-%m-%d %H:%M:%S").replace(tzinfo=buenos_aires_tz) if last_update_str else None
 except Exception as e:
     print(f"Error al leer A1: {e}")
@@ -58,13 +67,22 @@ tickers = list(tickers_dict.keys())
 
 # Descargar datos
 print("Descargando datos de Yahoo Finance...")
-data = yf.download(tickers, period="6mo", group_by="ticker", threads=True)
-print("Datos descargados.")
+try:
+    data = yf.download(tickers, period="6mo", group_by="ticker", threads=True)
+    print("Datos descargados.")
+except Exception as e:
+    error_msg = f"Error descargando datos: {str(e)}"
+    print(error_msg)
+    data_sheet.update('G1', 'Error en workflow')
+    data_sheet.format('G1', {"backgroundColor": {"red": 1, "green": 0.8, "blue": 0.8}, "textFormat": {"foregroundColor": {"red": 0, "green": 0, "blue": 0}}})
+    data_sheet.update_cell(1, 7, comment=f"{error_msg}\nLink: https://github.com/szmucalan/analisis-merval/actions/runs/{os.getenv('GITHUB_RUN_ID', 'unknown')}")
+    sys.exit(1)
 
 def get_currency(ticker):
     return "ARS" if ticker.endswith('.BA') else "USD"
 
 def calculate_indicators(ticker_data, ticker):
+    print(f"Calculando indicadores para {ticker}")
     if ticker_data['Close'].isna().all():
         return None
     
@@ -225,7 +243,7 @@ interpretations = [
 
 # Preparar datos para actualización masiva
 update_data = [
-    [f"*Última actualización*: {datetime.now(buenos_aires_tz).strftime('%Y-%m-%d %H:%M:%S')}"],
+    [f"Última actualización: {datetime.now(buenos_aires_tz).strftime('%Y-%m-%d %H:%M:%S')}"],
     interpretations
 ] + [
     ["Ticker", "Categoría", "Moneda", "Precio", "RSI", "Volumen", "MACD", 
@@ -233,19 +251,43 @@ update_data = [
      "Acción Sugerida", "Detalle Acción"]
 ] + data_rows
 
-# Actualizar Google Sheets
-print("Actualizando Google Sheet...")
-data_sheet.update('A1:N' + str(len(update_data)), update_data)
-print("Sheet actualizado.")
+# Actualizar Google Sheets con manejo de errores
+print(f"Intentando actualizar con {len(update_data)} filas")
+try:
+    data_sheet.update('A1:N' + str(len(update_data)), update_data)
+    print("Sheet actualizado.")
+    data_sheet.update('G1', 'Sin Error en workflow')
+    data_sheet.format('G1', {"backgroundColor": {"red": 0.8, "green": 1, "blue": 0.8}, "textFormat": {"foregroundColor": {"red": 0, "green": 0, "blue": 0}}})
+except Exception as e:
+    error_msg = f"Error actualizando Sheet: {str(traceback.format_exc())}"
+    print(error_msg)
+    data_sheet.update('G1', 'Error en workflow')
+    data_sheet.format('G1', {"backgroundColor": {"red": 1, "green": 0.8, "blue": 0.8}, "textFormat": {"foregroundColor": {"red": 0, "green": 0, "blue": 0}}})
+    workflow_url = f"https://github.com/szmucalan/analisis-merval/actions/runs/{os.getenv('GITHUB_RUN_ID', 'unknown')}"
+    data_sheet.update_cell(1, 7, comment=f"{error_msg}\nLink: {workflow_url}")
+    sys.exit(1)
 
 # Formatear columnas como moneda
-currency_cols = ['D']  # Solo Precio
+currency_cols = ['D']
 for col in currency_cols:
     data_sheet.format(f"{col}4:{col}{len(data_rows)+3}", {"numberFormat": {"type": "CURRENCY", "pattern": "#,##0.00"}})
 
-# Formato condicional
-data_sheet.format("M4:M" + str(len(data_rows)+3), {"backgroundColor": {"red": 0.9, "green": 0.9, "blue": 0.9}})
-data_sheet.format("M4:M" + str(len(data_rows)+3), {"textFormat": {"bold": True}, "backgroundColor": {"red": 0, "green": 1, "blue": 0}}, condition_type="TEXT_CONTAINS", condition_values=["Comprar"])
-data_sheet.format("M4:M" + str(len(data_rows)+3), {"textFormat": {"bold": True}, "backgroundColor": {"red": 1, "green": 0, "blue": 0}}, condition_type="TEXT_CONTAINS", condition_values=["Vender"])
+# Formato condicional usando add_conditional_format_rule
+data_sheet.add_conditional_format_rule(
+    ranges=["M4:M" + str(len(data_rows)+3)],
+    format={"backgroundColor": {"red": 0.9, "green": 0.9, "blue": 0.9}}
+)
+data_sheet.add_conditional_format_rule(
+    ranges=["M4:M" + str(len(data_rows)+3)],
+    format={"textFormat": {"bold": True}, "backgroundColor": {"red": 0, "green": 1, "blue": 0}},
+    rule_type="TEXT_CONTAINS",
+    rule_value="Comprar"
+)
+data_sheet.add_conditional_format_rule(
+    ranges=["M4:M" + str(len(data_rows)+3)],
+    format={"textFormat": {"bold": True}, "backgroundColor": {"red": 1, "green": 0, "blue": 0}},
+    rule_type="TEXT_CONTAINS",
+    rule_value="Vender"
+)
 
 print("Google Sheet actualizado con éxito el", datetime.now(buenos_aires_tz).strftime("%Y-%m-%d %H:%M:%S"))
