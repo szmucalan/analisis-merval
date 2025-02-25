@@ -22,6 +22,13 @@ buenos_aires_tz = pytz.timezone('America/Argentina/Buenos_Aires')
 now = datetime.now(buenos_aires_tz)
 print(f"Hora actual en ART: {now.strftime('%Y-%m-%d %H:%M:%S')}")
 
+# Verificar si está dentro del horario de trading (Lunes a Viernes, 11:00-18:00 ART)
+weekday = now.weekday()  # 0 = Lunes, 6 = Domingo
+hour = now.hour
+if weekday >= 5 or hour < 11 or hour >= 18:
+    print(f"No se actualiza: Fuera del horario de trading (Lun-Vie 11:00-18:00 ART). Día: {weekday}, Hora: {hour}")
+    exit()
+
 # Verificación de tiempo desde la última actualización (sin restricción)
 try:
     last_update_str = data_sheet.acell('A1').value
