@@ -22,6 +22,13 @@ buenos_aires_tz = pytz.timezone('America/Argentina/Buenos_Aires')
 now = datetime.now(buenos_aires_tz)
 print(f"Hora actual en ART: {now.strftime('%Y-%m-%d %H:%M:%S')}")
 
+# Verificar si está dentro del horario de trading (Lunes a Viernes, 11:00-18:00 ART)
+weekday = now.weekday()  # 0 = Lunes, 6 = Domingo
+hour = now.hour
+if weekday >= 5 or hour < 11 or hour >= 18:
+    print(f"No se actualiza: Fuera del horario de trading (Lun-Vie 11:00-18:00 ART). Día: {weekday}, Hora: {hour}")
+    exit()
+
 # Verificar tiempo desde la última actualización
 try:
     last_update_str = data_sheet.acell('A1').value
@@ -36,11 +43,6 @@ except Exception as e:
 if last_update:
     time_diff = now - last_update
     print(f"Diferencia de tiempo: {time_diff}")
-    if time_diff < timedelta(minutes=15):
-        minutes_left = 15 - time_diff.total_seconds() // 60
-        print(f"Error: No pasaron los 15 minutos. Restan {int(minutes_left)} minutos para la próxima actualización.")
-        # No salimos, permitimos actualizar para depurar
-        # exit()
 
 # Lista de tickers y categorías
 tickers_dict = {
@@ -219,6 +221,9 @@ update_data = [
 ] + data_rows
 
 # Actualizar Google Sheets en una sola llamada
+print("Descargando datos de Yahoo Finance...")
+data = yf.download(tickers, period="6mo", group_by="ticker", threads=True)
+print("Datos descargados.")
 print("Actualizando Google Sheet...")
 data_sheet.update('A1:Q' + str(len(update_data)), update_data)
 print("Sheet actualizado.")
