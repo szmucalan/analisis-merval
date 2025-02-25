@@ -7,7 +7,7 @@ import os
 import json
 import pytz
 
-# Configuración de Google Sheets con secreto desde variable de entorno - prueba
+# Configuración de Google Sheets con secreto desde variable de entorno
 scope = ["https://spreadsheets.google.com/feeds", "https://www.googleapis.com/auth/drive"]
 creds_json = os.getenv('GOOGLE_CREDENTIALS')
 creds_dict = json.loads(creds_json)
@@ -36,7 +36,7 @@ if last_update:
         exit()
 
 # Lista de tickers y categorías
-tickers = {
+tickers_dict = {
     'YPF': 'Acciones Líderes', 'TGS': 'Acciones Líderes', 'PAM': 'Acciones Líderes',
     'VIST': 'Acciones Líderes', 'GGAL': 'Acciones Líderes', 'CEPU': 'Acciones Líderes',
     'LOMA': 'Acciones Líderes', 'EDN': 'Acciones Líderes', 'BBAR': 'Acciones Líderes',
@@ -48,68 +48,96 @@ tickers = {
     'QQQ': 'CEDEARs', 'AMZN': 'CEDEARs', 'AAPL': 'CEDEARs', 'NVDA': 'CEDEARs',
     'NFLX': 'CEDEARs', 'UBER': 'CEDEARs'
 }
+tickers = list(tickers_dict.keys())
+
+# Descargar datos de todos los tickers en una sola llamada
+data = yf.download(tickers, period="6mo", group_by="ticker", threads=True)
 
 def get_currency(ticker):
     return "ARS" if ticker.endswith('.BA') else "USD"
 
-def calculate_indicators(data):
-    delta = data['Close'].diff()
-    gain = (delta.where(delta > 0, 0)).rolling(window=14).mean()
-    loss = (-delta.where(delta < 0, 0)).rolling(window=14).mean()
+def calculate_indicators(ticker_data, ticker):
+    if ticker_data['Close'].isna().all():
+        return None
+    
+    delta = ticker_data['Close'].diff()
+    gain = delta.where(delta > 0, 0).rolling(window=14).mean()
+    loss = -delta.where(delta < 0, 0).rolling(window=14).mean()
     rs = gain / loss
     rsi = 100 - (100 / (1 + rs))
     
-    ema12 = data['Close'].ewm(span=12, adjust=False).mean()
-    ema26 = data['Close'].ewm(span=26, adjust=False).mean()
+    ema12 = ticker_data['Close'].ewm(span=12, adjust=False).mean()
+    ema26 = ticker_data['Close'].ewm(span=26, adjust=False).mean()
     macd = ema12 - ema26
     signal = macd.ewm(span=9, adjust=False).mean()
     macd_value = macd - signal
     
-    ema50 = data['Close'].ewm(span=50, adjust=False).mean()
-    ema100 = data['Close'].ewm(span=100, adjust=False).mean()
+    ema50 = ticker_data['Close'].ewm(span=50, adjust=False).mean()
+    ema100 = ticker_data['Close'].ewm(span=100, adjust=False).mean()
     
-    sma20 = data['Close'].rolling(window=20).mean()
-    std20 = data['Close'].rolling(window=20).std()
+    sma20 = ticker_data['Close'].rolling(window=20).mean()
+    std20 = ticker_data['Close'].rolling(window=20).std()
     bollinger_upper = sma20 + 2 * std20
     bollinger_lower = sma20 - 2 * std20
     bollinger_width = (bollinger_upper - bollinger_lower) / sma20
     
-    tr = pd.concat([data['High'] - data['Low'], 
-                    abs(data['High'] - data['Close'].shift()), 
-                    abs(data['Low'] - data['Close'].shift())], axis=1).max(axis=1)
+    tr = pd.concat([ticker_data['High'] - ticker_data['Low'], 
+                    abs(ticker_data['High'] - ticker_data['Close'].shift()), 
+                    abs(ticker_data['Low'] - ticker_data['Close'].shift())], axis=1).max(axis=1)
     atr = tr.rolling(window=14).mean()
-    plus_dm = (data['High'] - data['High'].shift()).where(lambda x: x > 0, 0)
-    minus_dm = (data['Low'].shift() - data['Low']).where(lambda x: x > 0, 0)
+    plus_dm = (ticker_data['High'] - ticker_data['High'].shift()).where(lambda x: x > 0, 0)
+    minus_dm = (ticker_data['Low'].shift() - ticker_data['Low']).where(lambda x: x > 0, 0)
     plus_di = 100 * (plus_dm.rolling(window=14).mean() / atr)
     minus_di = 100 * (minus_dm.rolling(window=14).mean() / atr)
     dx = 100 * abs(plus_di - minus_di) / (plus_di + minus_di)
     adx = dx.rolling(window=14).mean()
     
-    soporte_diario = data['Low'].iloc[-2] if len(data) >= 2 else None
-    resistencia_diario = data['High'].iloc[-2] if len(data) >= 2 else None
-    soporte_semanal = data['Low'].tail(5).min() if len(data) >= 5 else None
-    resistencia_semanal = data['High'].tail(5).max() if len(data) >= 5 else None
+    soporte_diario = ticker_data['Low'].iloc[-2] if len(ticker_data) >= 2 else None
+    resistencia_diario = ticker_data['High'].iloc[-2] if len(ticker_data) >= 2 else None
+    soporte_semanal = ticker_data['Low'].tail(5).min() if len(ticker_data) >= 5 else None
+    resistencia_semanal = ticker_data['High'].tail(5).max() if len(ticker_data) >= 5 else None
     
-    change_1d = ((data['Close'].iloc[-1] - data['Close'].iloc[-2]) / data['Close'].iloc[-2]) * 100 if len(data) >= 2 else 0
-    change_5d = ((data['Close'].iloc[-1] - data['Close'].iloc[-6]) / data['Close'].iloc[-6]) * 100 if len(data) >= 6 else 0
+    change_1d = ((ticker_data['Close'].iloc[-1] - ticker_data['Close'].iloc[-2]) / ticker_data['Close'].iloc[-2]) * 100 if len(ticker_data) >= 2 else 0
+    change_5d = ((ticker_data['Close'].iloc[-1] - ticker_data['Close'].iloc[-6]) / ticker_data['Close'].iloc[-6]) * 100 if len(ticker_data) >= 6 else 0
     
-    vol_avg = data['Volume'].tail(5).mean() if len(data) >= 5 else data['Volume'].iloc[-1]
-    vol_increase = data['Volume'].iloc[-1] > vol_avg * 1.5
+    vol_avg = ticker_data['Volume'].tail(5).mean() if len(ticker_data) >= 5 else ticker_data['Volume'].iloc[-1]
+    vol_increase = ticker_data['Volume'].iloc[-1] > vol_avg * 1.5
     
-    macd_last = macd.iloc[-1] if len(macd) >= 1 else 0
-    macd_prev = macd.iloc[-2] if len(macd) >= 2 else 0
-    signal_last = signal.iloc[-1] if len(signal) >= 1 else 0
-    signal_prev = signal.iloc[-2] if len(signal) >= 2 else 0
-    
-    return (rsi.iloc[-1], data['Volume'].iloc[-1], macd_value.iloc[-1], 
-            macd_last, macd_prev, signal_last, signal_prev, 
-            soporte_diario, resistencia_diario, soporte_semanal, resistencia_semanal, 
-            change_1d, change_5d, vol_increase, 
-            ema50.iloc[-1], ema100.iloc[-1], 
-            bollinger_width.iloc[-1] if not pd.isna(bollinger_width.iloc[-1]) else 0, 
-            adx.iloc[-1] if not pd.isna(adx.iloc[-1]) else 0)
+    return {
+        'rsi': rsi.iloc[-1],
+        'volume': ticker_data['Volume'].iloc[-1],
+        'macd': macd_value.iloc[-1],
+        'macd_last': macd.iloc[-1],
+        'macd_prev': macd.iloc[-2] if len(macd) >= 2 else 0,
+        'signal_last': signal.iloc[-1],
+        'signal_prev': signal.iloc[-2] if len(signal) >= 2 else 0,
+        'soporte_diario': soporte_diario,
+        'resistencia_diario': resistencia_diario,
+        'soporte_semanal': soporte_semanal,
+        'resistencia_semanal': resistencia_semanal,
+        'change_1d': change_1d,
+        'change_5d': change_5d,
+        'vol_increase': vol_increase,
+        'ema50': ema50.iloc[-1],
+        'ema100': ema100.iloc[-1],
+        'bollinger_width': bollinger_width.iloc[-1] if not pd.isna(bollinger_width.iloc[-1]) else 0,
+        'adx': adx.iloc[-1] if not pd.isna(adx.iloc[-1]) else 0,
+        'price': ticker_data['Close'].iloc[-1]
+    }
 
-def suggest_action(rsi, macd_last, macd_prev, signal_last, signal_prev, change_1d, change_5d, vol_increase, price, ema50, ema100, currency):
+def suggest_action(indicators, currency):
+    rsi = indicators['rsi']
+    macd_last = indicators['macd_last']
+    macd_prev = indicators['macd_prev']
+    signal_last = indicators['signal_last']
+    signal_prev = indicators['signal_prev']
+    change_1d = indicators['change_1d']
+    change_5d = indicators['change_5d']
+    vol_increase = indicators['vol_increase']
+    price = indicators['price']
+    ema50 = indicators['ema50']
+    ema100 = indicators['ema100']
+    
     macd_cross_up = macd_last > signal_last and macd_prev <= signal_prev
     macd_cross_down = macd_last < signal_last and macd_prev >= signal_prev
     ema_cross_up = price > ema50 and price > ema100
@@ -138,43 +166,51 @@ def suggest_action(rsi, macd_last, macd_prev, signal_last, signal_prev, change_1
     
     return "Mantener", f"Mantener en {currency} {price:.2f}, sin señal clara"
 
-# Obtener datos y actualizar Google Sheets
+# Preparar datos para actualización masiva
 data_rows = []
-for ticker, category in tickers.items():
+for ticker in tickers:
     try:
-        stock = yf.Ticker(ticker)
-        hist = stock.history(period="6mo")
-        if hist.empty:
+        ticker_data = data[ticker].dropna(how='all')
+        if ticker_data.empty:
             print(f"No hay datos para {ticker}")
             continue
-        (rsi, volume, macd, macd_last, macd_prev, signal_last, signal_prev, 
-         soporte_d, resistencia_d, soporte_s, resistencia_s, change_1d, change_5d, vol_increase, 
-         ema50, ema100, bollinger_width, adx) = calculate_indicators(hist)
-        price = hist['Close'].iloc[-1]
-        currency = get_currency(ticker)
-        action, detail = suggest_action(rsi, macd_last, macd_prev, signal_last, signal_prev, 
-                                        change_1d, change_5d, vol_increase, price, ema50, ema100, currency)
         
-        rsi_status = "Sobrecompra" if rsi > 65 else "Sobreventa" if rsi < 35 else ""
-        rsi_str = f"[{rsi_status}] {rsi:.2f}" if rsi_status else f"{rsi:.2f}"
+        indicators = calculate_indicators(ticker_data, ticker)
+        if indicators is None:
+            print(f"No hay datos válidos para {ticker}")
+            continue
+        
+        currency = get_currency(ticker)
+        action, detail = suggest_action(indicators, currency)
+        
+        rsi_status = "Sobrecompra" if indicators['rsi'] > 65 else "Sobreventa" if indicators['rsi'] < 35 else ""
+        rsi_str = f"[{rsi_status}] {indicators['rsi']:.2f}" if rsi_status else f"{indicators['rsi']:.2f}"
+        
         data_rows.append([
-            ticker, category, currency, price, rsi_str, int(volume), f"{macd:.2f}", 
-            f"{ema50:.2f}", f"{ema100:.2f}", f"{bollinger_width:.2f}", f"{adx:.2f}",
-            f"{soporte_d:.2f}" if soporte_d else "N/A", f"{resistencia_d:.2f}" if resistencia_d else "N/A", 
-            f"{soporte_s:.2f}" if soporte_s else "N/A", f"{resistencia_s:.2f}" if resistencia_s else "N/A", 
+            ticker, tickers_dict[ticker], currency, indicators['price'], rsi_str, int(indicators['volume']), 
+            f"{indicators['macd']:.2f}", f"{indicators['ema50']:.2f}", f"{indicators['ema100']:.2f}", 
+            f"{indicators['bollinger_width']:.2f}", f"{indicators['adx']:.2f}",
+            f"{indicators['soporte_diario']:.2f}" if indicators['soporte_diario'] else "N/A", 
+            f"{indicators['resistencia_diario']:.2f}" if indicators['resistencia_diario'] else "N/A", 
+            f"{indicators['soporte_semanal']:.2f}" if indicators['soporte_semanal'] else "N/A", 
+            f"{indicators['resistencia_semanal']:.2f}" if indicators['resistencia_semanal'] else "N/A", 
             action, detail
         ])
     except Exception as e:
         print(f"Error con {ticker}: {e}")
 
-# Actualizar Google Sheets
-data_sheet.update_cell(1, 1, f"*Última actualización*: {datetime.now(buenos_aires_tz).strftime('%Y-%m-%d %H:%M:%S')}")
-data_sheet.update('A2:Q2', [["Ticker", "Categoría", "Moneda", "Precio", "RSI", "Volumen", "MACD", 
-                            "EMA 50", "EMA 100", "Bollinger Width", "ADX",
-                            "Soporte Diario", "Resistencia Diaria", "Soporte Semanal", "Resistencia Semanal", 
-                            "Acción Sugerida", "Detalle Acción"]])
-for i, row in enumerate(data_rows, start=3):  # Empezar desde fila 3
-    data_sheet.update(f"A{i}:Q{i}", [row])
+# Preparar datos para actualización masiva
+update_data = [
+    [f"*Última actualización*: {datetime.now(buenos_aires_tz).strftime('%Y-%m-%d %H:%M:%S')}"]
+] + [
+    ["Ticker", "Categoría", "Moneda", "Precio", "RSI", "Volumen", "MACD", 
+     "EMA 50", "EMA 100", "Bollinger Width", "ADX",
+     "Soporte Diario", "Resistencia Diaria", "Soporte Semanal", "Resistencia Semanal", 
+     "Acción Sugerida", "Detalle Acción"]
+] + data_rows
+
+# Actualizar Google Sheets en una sola llamada
+data_sheet.update('A1:Q' + str(len(update_data)), update_data)
 
 # Formatear columnas como moneda
 currency_cols = ['D', 'H', 'I', 'L', 'M', 'N', 'O']  # Precio, EMA 50, EMA 100, Soporte/Resistencia
