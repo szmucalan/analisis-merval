@@ -10,6 +10,7 @@ import pytz
 # Configuración de Google Sheets con secreto desde variable de entorno
 scope = ["https://spreadsheets.google.com/feeds", "https://www.googleapis.com/auth/drive"]
 creds_json = os.getenv('GOOGLE_CREDENTIALS')
+print("Credenciales obtenidas del entorno:", creds_json[:50] if creds_json else "No se encontraron credenciales")  # Depuración
 creds_dict = json.loads(creds_json)
 creds = ServiceAccountCredentials.from_json_keyfile_dict(creds_dict, scope)
 client = gspread.authorize(creds)
@@ -18,22 +19,28 @@ data_sheet = sheet.sheet1
 
 # Zona horaria de Buenos Aires
 buenos_aires_tz = pytz.timezone('America/Argentina/Buenos_Aires')
+now = datetime.now(buenos_aires_tz)
+print(f"Hora actual en ART: {now.strftime('%Y-%m-%d %H:%M:%S')}")
 
 # Verificar tiempo desde la última actualización
 try:
     last_update_str = data_sheet.acell('A1').value
+    print(f"Última actualización encontrada en A1: {last_update_str}")
     if last_update_str.startswith('*Última actualización*: '):
         last_update_str = last_update_str.replace('*Última actualización*: ', '')
     last_update = datetime.strptime(last_update_str, "%Y-%m-%d %H:%M:%S").replace(tzinfo=buenos_aires_tz) if last_update_str else None
-except:
+except Exception as e:
+    print(f"Error al leer A1: {e}")
     last_update = None
 
 if last_update:
-    time_diff = datetime.now(buenos_aires_tz) - last_update
+    time_diff = now - last_update
+    print(f"Diferencia de tiempo: {time_diff}")
     if time_diff < timedelta(minutes=15):
         minutes_left = 15 - time_diff.total_seconds() // 60
         print(f"Error: No pasaron los 15 minutos. Restan {int(minutes_left)} minutos para la próxima actualización.")
-        exit()
+        # No salimos, permitimos actualizar para depurar
+        # exit()
 
 # Lista de tickers y categorías
 tickers_dict = {
@@ -51,7 +58,9 @@ tickers_dict = {
 tickers = list(tickers_dict.keys())
 
 # Descargar datos de todos los tickers en una sola llamada
+print("Descargando datos de Yahoo Finance...")
 data = yf.download(tickers, period="6mo", group_by="ticker", threads=True)
+print("Datos descargados.")
 
 def get_currency(ticker):
     return "ARS" if ticker.endswith('.BA') else "USD"
@@ -210,7 +219,9 @@ update_data = [
 ] + data_rows
 
 # Actualizar Google Sheets en una sola llamada
+print("Actualizando Google Sheet...")
 data_sheet.update('A1:Q' + str(len(update_data)), update_data)
+print("Sheet actualizado.")
 
 # Formatear columnas como moneda
 currency_cols = ['D', 'H', 'I', 'L', 'M', 'N', 'O']  # Precio, EMA 50, EMA 100, Soporte/Resistencia
