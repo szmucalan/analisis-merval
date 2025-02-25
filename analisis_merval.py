@@ -28,7 +28,7 @@ buenos_aires_tz = pytz.timezone('America/Argentina/Buenos_Aires')
 now = datetime.now(buenos_aires_tz)
 print(f"Hora actual en ART: {now.strftime('%Y-%m-%d %H:%M:%S')}")
 
-# Verificar horario de trading (Lunes a Viernes, 11:00-18:00 ART)
+# Verificar horario de trading
 weekday = now.weekday()
 hour = now.hour
 if weekday >= 5 or hour < 11 or hour >= 18:
@@ -61,22 +61,28 @@ tickers_dict = {
     'PYPL': 'CEDEARs', 'PAGS': 'CEDEARs', 'SID': 'CEDEARs', 'AVGO': 'CEDEARs',
     'MORI.BA': 'Acciones del Panel General', 'META': 'CEDEARs', 'GOOG': 'CEDEARs',
     'QQQ': 'CEDEARs', 'AMZN': 'CEDEARs', 'AAPL': 'CEDEARs', 'NVDA': 'CEDEARs',
-    'NFLX': 'CEDEARs', 'UBER': 'CEDEARs', 'MERV': 'Índice'
+    'NFLX': 'CEDEARs', 'UBER': 'CEDEARs', '^MERV': 'Índice'
 }
 tickers = list(tickers_dict.keys())
 
-# Descargar datos
+# Descargar datos con reintentos
 print("Descargando datos de Yahoo Finance...")
-try:
-    data = yf.download(tickers, period="6mo", group_by="ticker", threads=True)
-    print("Datos descargados.")
-except Exception as e:
-    error_msg = f"Error descargando datos: {str(e)}"
-    print(error_msg)
-    data_sheet.update('G1', 'Error en workflow')
-    data_sheet.format('G1', {"backgroundColor": {"red": 1, "green": 0.8, "blue": 0.8}, "textFormat": {"foregroundColor": {"red": 0, "green": 0, "blue": 0}}})
-    data_sheet.update_cell(1, 7, comment=f"{error_msg}\nLink: https://github.com/szmucalan/analisis-merval/actions/runs/{os.getenv('GITHUB_RUN_ID', 'unknown')}")
-    sys.exit(1)
+max_retries = 5
+for attempt in range(max_retries):
+    try:
+        data = yf.download(tickers, period="6mo", group_by="ticker", threads=True, timeout=20)
+        print("Datos descargados.")
+        break
+    except Exception as e:
+        print(f"Intento {attempt+1} falló: {e}")
+        if attempt == max_retries - 1:
+            error_msg = f"Error descargando datos tras {max_retries} intentos: {str(e)}"
+            print(error_msg)
+            data_sheet.update_cell(1, 7, 'Error en workflow')
+            data_sheet.format('G1', {"backgroundColor": {"red": 1, "green": 0.8, "blue": 0.8}, "textFormat": {"foregroundColor": {"red": 0, "green": 0, "blue": 0}}})
+            workflow_url = f"https://github.com/szmucalan/analisis-merval/actions/runs/{os.getenv('GITHUB_RUN_ID', 'unknown')}"
+            data_sheet.update_cell(1, 7, comment=f"{error_msg}\nLink: {workflow_url}")
+            sys.exit(1)
 
 def get_currency(ticker):
     return "ARS" if ticker.endswith('.BA') else "USD"
@@ -114,9 +120,9 @@ def calculate_indicators(ticker_data, ticker):
     vol_increase = ticker_data['Volume'].iloc[-1] > vol_avg * 2.0
     vol_relative = ticker_data['Volume'].iloc[-1] / vol_avg if vol_avg > 0 else 1.0
     
-    if ticker != 'MERV' and not data['MERV']['Close'].isna().all():
+    if ticker != '^MERV' and not data['^MERV']['Close'].isna().all():
         ticker_returns = (ticker_data['Close'].iloc[-1] / ticker_data['Close'].iloc[-20] - 1) if len(ticker_data) >= 20 else 0
-        merv_returns = (data['MERV']['Close'].iloc[-1] / data['MERV']['Close'].iloc[-20] - 1) if len(data['MERV']) >= 20 else 0
+        merv_returns = (data['^MERV']['Close'].iloc[-1] / data['^MERV']['Close'].iloc[-20] - 1) if len(data['^MERV']) >= 20 else 0
         rs = ticker_returns / merv_returns if merv_returns != 0 else 1.0
     else:
         rs = 1.0
@@ -166,17 +172,26 @@ def suggest_action(indicators, currency, market_trend):
         target_price = price * (1 + atr / price * 2)
         stop_loss = price * (1 - atr / price)
         rr_ratio = (target_price - price) / (price - stop_loss)
+        reason = "RSI en sobreventa" if rsi < 30 else "Cruce alcista del MACD"
         if rr_ratio >= 2:
-            return "Comprar", f"Comprar a {currency} {price:.2f}, TP: {target_price:.2f}, SL: {stop_loss:.2f}, RR: {rr_ratio:.1f}"
+            print(f"{ticker}: Señal de compra - RSI: {rsi:.2f}, MACD: {macd_last:.2f}/{signal_last:.2f}, Vol: {vol_increase}, Stoch: {stoch_k:.2f}/{stoch_d:.2f}, RS: {rs:.2f}, Market: {market_trend}")
+            return "Comprar", f"Comprar a {currency} {price:.2f}, debido a {reason}", f"TP: {target_price:.2f}, SL: {stop_loss:.2f}, RR: {rr_ratio:.1f}"
+        else:
+            print(f"{ticker}: RR insuficiente - {rr_ratio:.2f}")
     
     if rsi > 70 and macd_cross_down and vol_increase and stoch_overbought and rs < 1.0 and market_trend != "Alcista":
         target_price = price * (1 - atr / price * 2)
         stop_loss = price * (1 + atr / price)
         rr_ratio = (price - target_price) / (stop_loss - price)
+        reason = "RSI en sobrecompra" if rsi > 70 else "Cruce bajista del MACD"
         if rr_ratio >= 2:
-            return "Vender", f"Vender a {currency} {price:.2f}, TP: {target_price:.2f}, SL: {stop_loss:.2f}, RR: {rr_ratio:.1f}"
+            print(f"{ticker}: Señal de venta - RSI: {rsi:.2f}, MACD: {macd_last:.2f}/{signal_last:.2f}, Vol: {vol_increase}, Stoch: {stoch_k:.2f}/{stoch_d:.2f}, RS: {rs:.2f}, Market: {market_trend}")
+            return "Vender", f"Vender a {currency} {price:.2f}, debido a {reason}", f"TP: {target_price:.2f}, SL: {stop_loss:.2f}, RR: {rr_ratio:.1f}"
+        else:
+            print(f"{ticker}: RR insuficiente - {rr_ratio:.2f}")
     
-    return "Mantener", f"Mantener en {currency} {price:.2f}"
+    print(f"{ticker}: Mantener - RSI: {rsi:.2f}, MACD: {macd_last:.2f}/{signal_last:.2f}, Vol: {vol_increase}, Stoch: {stoch_k:.2f}/{stoch_d:.2f}, RS: {rs:.2f}, Market: {market_trend}")
+    return "Mantener", f"Mantener en {currency} {price:.2f}", ""
 
 def get_trend(price, ema50, ema100):
     if price > ema50 > ema100:
@@ -186,15 +201,15 @@ def get_trend(price, ema50, ema100):
     else:
         return "Neutral"
 
-# Tendencia del mercado (MERVAL)
-market_data = data['MERV'].dropna(how='all')
-market_indicators = calculate_indicators(market_data, 'MERV') if not market_data.empty else {'ema50': 0, 'ema100': 0, 'price': 0}
+# Tendencia del mercado (^MERV)
+market_data = data['^MERV'].dropna(how='all')
+market_indicators = calculate_indicators(market_data, '^MERV') if not market_data.empty else {'ema50': 0, 'ema100': 0, 'price': 0}
 market_trend = get_trend(market_indicators['price'], market_indicators['ema50'], market_indicators['ema100'])
 
 # Preparar datos para actualización masiva
 data_rows = []
 for ticker in tickers:
-    if ticker == 'MERV':
+    if ticker == '^MERV':
         continue
     try:
         ticker_data = data[ticker].dropna(how='all')
@@ -208,7 +223,7 @@ for ticker in tickers:
             continue
         
         currency = get_currency(ticker)
-        action, detail = suggest_action(indicators, currency, market_trend)
+        action, action_detail, levels = suggest_action(indicators, currency, market_trend)
         trend = get_trend(indicators['price'], indicators['ema50'], indicators['ema100'])
         
         rsi_status = "Sobrecompra" if indicators['rsi'] > 70 else "Sobreventa" if indicators['rsi'] < 30 else ""
@@ -218,7 +233,7 @@ for ticker in tickers:
             ticker, tickers_dict[ticker], currency, indicators['price'], rsi_str, 
             int(indicators['volume']), f"{indicators['macd']:.2f}", f"{indicators['change_1d']:.2f}%", 
             f"{indicators['vol_relative']:.1f}x", trend, f"{indicators['atr']:.2f}", 
-            f"{indicators['rs']:.2f}", action, detail
+            f"{indicators['rs']:.2f}", action_detail, levels
         ])
     except Exception as e:
         print(f"Error con {ticker}: {e}")
@@ -237,18 +252,17 @@ interpretations = [
     "Dirección general (Alcista: compra, Bajista: venta)",
     "Volatilidad (alto = más riesgo/movimiento)",
     "Fuerza vs. MERVAL (>1 compra, <1 venta)",
-    "Qué hacer (ejecutá si coincide con Detalle)",
-    "Detalles: precio, TP, SL, RR (usa para órdenes)"
+    "Qué hacer (ejecutá si coincide con Niveles)",
+    "Niveles: TP (ganancia), SL (pérdida), RR (riesgo/recompensa)"
 ]
 
 # Preparar datos para actualización masiva
 update_data = [
     [f"Última actualización: {datetime.now(buenos_aires_tz).strftime('%Y-%m-%d %H:%M:%S')}"],
-    interpretations
-] + [
+    interpretations,
     ["Ticker", "Categoría", "Moneda", "Precio", "RSI", "Volumen", "MACD", 
      "Cambio 1D", "Volumen Relativo", "Tendencia", "ATR", "Fuerza Relativa", 
-     "Acción Sugerida", "Detalle Acción"]
+     "Acción Sugerida", "Niveles"]
 ] + data_rows
 
 # Actualizar Google Sheets con manejo de errores
@@ -256,12 +270,12 @@ print(f"Intentando actualizar con {len(update_data)} filas")
 try:
     data_sheet.update('A1:N' + str(len(update_data)), update_data)
     print("Sheet actualizado.")
-    data_sheet.update('G1', 'Sin Error en workflow')
+    data_sheet.update_cell(1, 7, 'Sin Error en workflow')
     data_sheet.format('G1', {"backgroundColor": {"red": 0.8, "green": 1, "blue": 0.8}, "textFormat": {"foregroundColor": {"red": 0, "green": 0, "blue": 0}}})
 except Exception as e:
     error_msg = f"Error actualizando Sheet: {str(traceback.format_exc())}"
     print(error_msg)
-    data_sheet.update('G1', 'Error en workflow')
+    data_sheet.update_cell(1, 7, 'Error en workflow')
     data_sheet.format('G1', {"backgroundColor": {"red": 1, "green": 0.8, "blue": 0.8}, "textFormat": {"foregroundColor": {"red": 0, "green": 0, "blue": 0}}})
     workflow_url = f"https://github.com/szmucalan/analisis-merval/actions/runs/{os.getenv('GITHUB_RUN_ID', 'unknown')}"
     data_sheet.update_cell(1, 7, comment=f"{error_msg}\nLink: {workflow_url}")
@@ -275,7 +289,9 @@ for col in currency_cols:
 # Formato condicional usando add_conditional_format_rule
 data_sheet.add_conditional_format_rule(
     ranges=["M4:M" + str(len(data_rows)+3)],
-    format={"backgroundColor": {"red": 0.9, "green": 0.9, "blue": 0.9}}
+    format={"backgroundColor": {"red": 0.9, "green": 0.9, "blue": 0.9}},
+    rule_type="CUSTOM_FORMULA",
+    rule_value="=FALSE"
 )
 data_sheet.add_conditional_format_rule(
     ranges=["M4:M" + str(len(data_rows)+3)],
