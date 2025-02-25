@@ -7,10 +7,10 @@ import os
 import json
 import pytz
 
-# Configuración de Google Sheets con secreto desde variable de entorno
+# Configuración de Google Sheets
 scope = ["https://spreadsheets.google.com/feeds", "https://www.googleapis.com/auth/drive"]
 creds_json = os.getenv('GOOGLE_CREDENTIALS')
-print("Credenciales obtenidas del entorno:", creds_json[:50] if creds_json else "No se encontraron credenciales")  # Depuración
+print("Credenciales obtenidas del entorno:", creds_json[:50] if creds_json else "No se encontraron credenciales")
 creds_dict = json.loads(creds_json)
 creds = ServiceAccountCredentials.from_json_keyfile_dict(creds_dict, scope)
 client = gspread.authorize(creds)
@@ -22,14 +22,7 @@ buenos_aires_tz = pytz.timezone('America/Argentina/Buenos_Aires')
 now = datetime.now(buenos_aires_tz)
 print(f"Hora actual en ART: {now.strftime('%Y-%m-%d %H:%M:%S')}")
 
-# Verificar si está dentro del horario de trading (Lunes a Viernes, 11:00-18:00 ART)
-weekday = now.weekday()  # 0 = Lunes, 6 = Domingo
-hour = now.hour
-if weekday >= 5 or hour < 11 or hour >= 18:
-    print(f"No se actualiza: Fuera del horario de trading (Lun-Vie 11:00-18:00 ART). Día: {weekday}, Hora: {hour}")
-    exit()
-
-# Verificar tiempo desde la última actualización
+# Verificación de tiempo desde la última actualización (sin restricción)
 try:
     last_update_str = data_sheet.acell('A1').value
     print(f"Última actualización encontrada en A1: {last_update_str}")
@@ -221,9 +214,6 @@ update_data = [
 ] + data_rows
 
 # Actualizar Google Sheets en una sola llamada
-print("Descargando datos de Yahoo Finance...")
-data = yf.download(tickers, period="6mo", group_by="ticker", threads=True)
-print("Datos descargados.")
 print("Actualizando Google Sheet...")
 data_sheet.update('A1:Q' + str(len(update_data)), update_data)
 print("Sheet actualizado.")
