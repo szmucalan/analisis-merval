@@ -10,7 +10,6 @@ import pytz
 # Configuración de Google Sheets
 scope = ["https://spreadsheets.google.com/feeds", "https://www.googleapis.com/auth/drive"]
 creds_json = os.getenv('GOOGLE_CREDENTIALS')
-print("Credenciales obtenidas del entorno:", creds_json[:50] if creds_json else "No se encontraron credenciales")
 creds_dict = json.loads(creds_json)
 creds = ServiceAccountCredentials.from_json_keyfile_dict(creds_dict, scope)
 client = gspread.authorize(creds)
@@ -20,19 +19,17 @@ data_sheet = sheet.sheet1
 # Zona horaria de Buenos Aires
 buenos_aires_tz = pytz.timezone('America/Argentina/Buenos_Aires')
 now = datetime.now(buenos_aires_tz)
-print(f"Hora actual en ART: {now.strftime('%Y-%m-%d %H:%M:%S')}")
 
-# Verificar si está dentro del horario de trading (Lunes a Viernes, 11:00-18:00 ART)
-weekday = now.weekday()  # 0 = Lunes, 6 = Domingo
+# Verificar horario de trading (Lunes a Viernes, 11:00-18:00 ART)
+weekday = now.weekday()
 hour = now.hour
 if weekday >= 5 or hour < 11 or hour >= 18:
     print(f"No se actualiza: Fuera del horario de trading (Lun-Vie 11:00-18:00 ART). Día: {weekday}, Hora: {hour}")
     exit()
 
-# Verificación de tiempo desde la última actualización (sin restricción)
+# Verificación de última actualización
 try:
     last_update_str = data_sheet.acell('A1').value
-    print(f"Última actualización encontrada en A1: {last_update_str}")
     if last_update_str.startswith('*Última actualización*: '):
         last_update_str = last_update_str.replace('*Última actualización*: ', '')
     last_update = datetime.strptime(last_update_str, "%Y-%m-%d %H:%M:%S").replace(tzinfo=buenos_aires_tz) if last_update_str else None
@@ -59,7 +56,7 @@ tickers_dict = {
 }
 tickers = list(tickers_dict.keys())
 
-# Descargar datos de todos los tickers en una sola llamada
+# Descargar datos
 print("Descargando datos de Yahoo Finance...")
 data = yf.download(tickers, period="6mo", group_by="ticker", threads=True)
 print("Datos descargados.")
@@ -86,33 +83,13 @@ def calculate_indicators(ticker_data, ticker):
     ema50 = ticker_data['Close'].ewm(span=50, adjust=False).mean()
     ema100 = ticker_data['Close'].ewm(span=100, adjust=False).mean()
     
-    sma20 = ticker_data['Close'].rolling(window=20).mean()
-    std20 = ticker_data['Close'].rolling(window=20).std()
-    bollinger_upper = sma20 + 2 * std20
-    bollinger_lower = sma20 - 2 * std20
-    bollinger_width = (bollinger_upper - bollinger_lower) / sma20
-    
-    tr = pd.concat([ticker_data['High'] - ticker_data['Low'], 
-                    abs(ticker_data['High'] - ticker_data['Close'].shift()), 
-                    abs(ticker_data['Low'] - ticker_data['Close'].shift())], axis=1).max(axis=1)
-    atr = tr.rolling(window=14).mean()
-    plus_dm = (ticker_data['High'] - ticker_data['High'].shift()).where(lambda x: x > 0, 0)
-    minus_dm = (ticker_data['Low'].shift() - ticker_data['Low']).where(lambda x: x > 0, 0)
-    plus_di = 100 * (plus_dm.rolling(window=14).mean() / atr)
-    minus_di = 100 * (minus_dm.rolling(window=14).mean() / atr)
-    dx = 100 * abs(plus_di - minus_di) / (plus_di + minus_di)
-    adx = dx.rolling(window=14).mean()
-    
-    soporte_diario = ticker_data['Low'].iloc[-2] if len(ticker_data) >= 2 else None
-    resistencia_diario = ticker_data['High'].iloc[-2] if len(ticker_data) >= 2 else None
-    soporte_semanal = ticker_data['Low'].tail(5).min() if len(ticker_data) >= 5 else None
-    resistencia_semanal = ticker_data['High'].tail(5).max() if len(ticker_data) >= 5 else None
-    
-    change_1d = ((ticker_data['Close'].iloc[-1] - ticker_data['Close'].iloc[-2]) / ticker_data['Close'].iloc[-2]) * 100 if len(ticker_data) >= 2 else 0
-    change_5d = ((ticker_data['Close'].iloc[-1] - ticker_data['Close'].iloc[-6]) / ticker_data['Close'].iloc[-6]) * 100 if len(ticker_data) >= 6 else 0
+    price = ticker_data['Close'].iloc[-1]
+    change_1d = ((price - ticker_data['Close'].iloc[-2]) / ticker_data['Close'].iloc[-2]) * 100 if len(ticker_data) >= 2 else 0
+    change_5d = ((price - ticker_data['Close'].iloc[-6]) / ticker_data['Close'].iloc[-6]) * 100 if len(ticker_data) >= 6 else 0
     
     vol_avg = ticker_data['Volume'].tail(5).mean() if len(ticker_data) >= 5 else ticker_data['Volume'].iloc[-1]
     vol_increase = ticker_data['Volume'].iloc[-1] > vol_avg * 1.5
+    vol_relative = ticker_data['Volume'].iloc[-1] / vol_avg if vol_avg > 0 else 1.0
     
     return {
         'rsi': rsi.iloc[-1],
@@ -122,18 +99,13 @@ def calculate_indicators(ticker_data, ticker):
         'macd_prev': macd.iloc[-2] if len(macd) >= 2 else 0,
         'signal_last': signal.iloc[-1],
         'signal_prev': signal.iloc[-2] if len(signal) >= 2 else 0,
-        'soporte_diario': soporte_diario,
-        'resistencia_diario': resistencia_diario,
-        'soporte_semanal': soporte_semanal,
-        'resistencia_semanal': resistencia_semanal,
         'change_1d': change_1d,
         'change_5d': change_5d,
         'vol_increase': vol_increase,
+        'vol_relative': vol_relative,
         'ema50': ema50.iloc[-1],
         'ema100': ema100.iloc[-1],
-        'bollinger_width': bollinger_width.iloc[-1] if not pd.isna(bollinger_width.iloc[-1]) else 0,
-        'adx': adx.iloc[-1] if not pd.isna(adx.iloc[-1]) else 0,
-        'price': ticker_data['Close'].iloc[-1]
+        'price': price
     }
 
 def suggest_action(indicators, currency):
@@ -175,7 +147,15 @@ def suggest_action(indicators, currency):
             reason = f"Subida reciente ({change_1d:.1f}% 1d, {change_5d:.1f}% 5d) con volumen"
         return "Vender", f"Vender a {currency} {target_price:.2f}, debido a {reason}"
     
-    return "Mantener", f"Mantener en {currency} {price:.2f}, sin señal clara"
+    return "Mantener", f"Mantener en {currency} {price:.2f}, sin señal clara}"
+
+def get_trend(price, ema50, ema100):
+    if price > ema50 > ema100:
+        return "Alcista"
+    elif price < ema50 < ema100:
+        return "Bajista"
+    else:
+        return "Neutral"
 
 # Preparar datos para actualización masiva
 data_rows = []
@@ -193,18 +173,15 @@ for ticker in tickers:
         
         currency = get_currency(ticker)
         action, detail = suggest_action(indicators, currency)
+        trend = get_trend(indicators['price'], indicators['ema50'], indicators['ema100'])
         
         rsi_status = "Sobrecompra" if indicators['rsi'] > 65 else "Sobreventa" if indicators['rsi'] < 35 else ""
         rsi_str = f"[{rsi_status}] {indicators['rsi']:.2f}" if rsi_status else f"{indicators['rsi']:.2f}"
         
         data_rows.append([
-            ticker, tickers_dict[ticker], currency, indicators['price'], rsi_str, int(indicators['volume']), 
-            f"{indicators['macd']:.2f}", f"{indicators['ema50']:.2f}", f"{indicators['ema100']:.2f}", 
-            f"{indicators['bollinger_width']:.2f}", f"{indicators['adx']:.2f}",
-            f"{indicators['soporte_diario']:.2f}" if indicators['soporte_diario'] else "N/A", 
-            f"{indicators['resistencia_diario']:.2f}" if indicators['resistencia_diario'] else "N/A", 
-            f"{indicators['soporte_semanal']:.2f}" if indicators['soporte_semanal'] else "N/A", 
-            f"{indicators['resistencia_semanal']:.2f}" if indicators['resistencia_semanal'] else "N/A", 
+            ticker, tickers_dict[ticker], currency, indicators['price'], rsi_str, 
+            int(indicators['volume']), f"{indicators['macd']:.2f}", 
+            f"{indicators['change_1d']:.2f}%", f"{indicators['vol_relative']:.1f}x", trend,
             action, detail
         ])
     except Exception as e:
@@ -215,18 +192,16 @@ update_data = [
     [f"*Última actualización*: {datetime.now(buenos_aires_tz).strftime('%Y-%m-%d %H:%M:%S')}"]
 ] + [
     ["Ticker", "Categoría", "Moneda", "Precio", "RSI", "Volumen", "MACD", 
-     "EMA 50", "EMA 100", "Bollinger Width", "ADX",
-     "Soporte Diario", "Resistencia Diaria", "Soporte Semanal", "Resistencia Semanal", 
-     "Acción Sugerida", "Detalle Acción"]
+     "Cambio 1D", "Volumen Relativo", "Tendencia", "Acción Sugerida", "Detalle Acción"]
 ] + data_rows
 
-# Actualizar Google Sheets en una sola llamada
+# Actualizar Google Sheets
 print("Actualizando Google Sheet...")
-data_sheet.update('A1:Q' + str(len(update_data)), update_data)
+data_sheet.update('A1:L' + str(len(update_data)), update_data)
 print("Sheet actualizado.")
 
 # Formatear columnas como moneda
-currency_cols = ['D', 'H', 'I', 'L', 'M', 'N', 'O']  # Precio, EMA 50, EMA 100, Soporte/Resistencia
+currency_cols = ['D']  # Solo Precio
 for col in currency_cols:
     data_sheet.format(f"{col}3:{col}{len(data_rows)+2}", {"numberFormat": {"type": "CURRENCY", "pattern": "#,##0.00"}})
 
