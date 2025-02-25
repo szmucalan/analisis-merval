@@ -2,8 +2,8 @@ name: Update Merval Sheet
 
 on:
   schedule:
-    - cron: '0,15,30,45 14-20 * * 1-5'  # Cada 15 min, Lun-Vie, 11:00-17:45 ART (14:00-20:45 UTC)
-  workflow_dispatch:  # Permite ejecución manual
+    - cron: '0,15,30,45 14-21 * * 1-5'  # 11:00-18:00 ART (14:00-21:00 UTC)
+  workflow_dispatch:
 
 jobs:
   update-sheet:
