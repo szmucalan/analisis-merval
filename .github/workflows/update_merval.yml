@@ -25,6 +25,8 @@ jobs:
       - name: Write credentials.json
         run: |
           echo "${{ secrets.GOOGLE_CREDENTIALS }}" > credentials.json
+          cat credentials.json  # Para inspeccionar el archivo en los logs
+          python -c 'import json; json.load(open("credentials.json"))'  # Validar JSON
 
       - name: Run script
         run: python analisis_merval.py
