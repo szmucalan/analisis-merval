@@ -5,6 +5,7 @@ from oauth2client.service_account import ServiceAccountCredentials
 from datetime import datetime, timedelta
 import os
 import json
+import pytz
 
 # Configuración de Google Sheets con secreto desde variable de entorno
 scope = ["https://spreadsheets.google.com/feeds", "https://www.googleapis.com/auth/drive"]
@@ -14,17 +15,21 @@ creds = ServiceAccountCredentials.from_json_keyfile_dict(creds_dict, scope)
 client = gspread.authorize(creds)
 sheet = client.open_by_key('1VxrU9jQnBoShNWY1zfbMSFCWc-tISgolOGm-zUbY_4Q')
 data_sheet = sheet.sheet1
-meta_sheet = sheet.get_worksheet(1) if len(sheet.worksheets()) > 1 else sheet.add_worksheet(title="Meta", rows=10, cols=10)
+
+# Zona horaria de Buenos Aires
+buenos_aires_tz = pytz.timezone('America/Argentina/Buenos_Aires')
 
 # Verificar tiempo desde la última actualización
 try:
-    last_update_str = meta_sheet.acell('A1').value
-    last_update = datetime.strptime(last_update_str, "%Y-%m-%d %H:%M:%S") if last_update_str else None
+    last_update_str = data_sheet.acell('A1').value
+    if last_update_str.startswith('*Última actualización*: '):
+        last_update_str = last_update_str.replace('*Última actualización*: ', '')
+    last_update = datetime.strptime(last_update_str, "%Y-%m-%d %H:%M:%S").replace(tzinfo=buenos_aires_tz) if last_update_str else None
 except:
     last_update = None
 
 if last_update:
-    time_diff = datetime.now() - last_update
+    time_diff = datetime.now(buenos_aires_tz) - last_update
     if time_diff < timedelta(minutes=15):
         minutes_left = 15 - time_diff.total_seconds() // 60
         print(f"Error: No pasaron los 15 minutos. Restan {int(minutes_left)} minutos para la próxima actualización.")
@@ -163,18 +168,17 @@ for ticker, category in tickers.items():
         print(f"Error con {ticker}: {e}")
 
 # Actualizar Google Sheets
-data_sheet.clear()
-data_sheet.append_row(["Ticker", "Categoría", "Moneda", "Precio", "RSI", "Volumen", "MACD", 
-                       "EMA 50", "EMA 100", "Bollinger Width", "ADX",
-                       "Soporte Diario", "Resistencia Diaria", "Soporte Semanal", "Resistencia Semanal", 
-                       "Acción Sugerida", "Detalle Acción"])
-for row in data_rows:
-    data_sheet.append_row(row)
+data_sheet.update_cell(1, 1, f"*Última actualización*: {datetime.now(buenos_aires_tz).strftime('%Y-%m-%d %H:%M:%S')}")
+data_sheet.update('A2:Q2', [["Ticker", "Categoría", "Moneda", "Precio", "RSI", "Volumen", "MACD", 
+                            "EMA 50", "EMA 100", "Bollinger Width", "ADX",
+                            "Soporte Diario", "Resistencia Diaria", "Soporte Semanal", "Resistencia Semanal", 
+                            "Acción Sugerida", "Detalle Acción"]])
+for i, row in enumerate(data_rows, start=3):  # Empezar desde fila 3
+    data_sheet.update(f"A{i}:Q{i}", [row])
 
 # Formatear columnas como moneda
 currency_cols = ['D', 'H', 'I', 'L', 'M', 'N', 'O']  # Precio, EMA 50, EMA 100, Soporte/Resistencia
 for col in currency_cols:
-    data_sheet.format(f"{col}2:{col}{len(data_rows)+1}", {"numberFormat": {"type": "CURRENCY", "pattern": "#,##0.00"}})
+    data_sheet.format(f"{col}3:{col}{len(data_rows)+2}", {"numberFormat": {"type": "CURRENCY", "pattern": "#,##0.00"}})
 
-meta_sheet.update_cell(1, 1, datetime.now().strftime("%Y-%m-%d %H:%M:%S"))
-print("Google Sheet actualizado con éxito el", datetime.now().strftime("%Y-%m-%d %H:%M:%S"))
+print("Google Sheet actualizado con éxito el", datetime.now(buenos_aires_tz).strftime("%Y-%m-%d %H:%M:%S"))
