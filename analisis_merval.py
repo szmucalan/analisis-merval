@@ -8,6 +8,7 @@ import json
 import pytz
 import sys
 import traceback
+from gspread_formatting import *
 
 # Configuración de Google Sheets
 scope = ["https://spreadsheets.google.com/feeds", "https://www.googleapis.com/auth/drive"]
@@ -168,7 +169,7 @@ def suggest_action(indicators, currency, market_trend):
     stoch_oversold = stoch_k < 20 and stoch_d < 20
     stoch_overbought = stoch_k > 80 and stoch_d > 80
     
-    if rsi < 30 and macd_cross_up and vol_increase and stoch_oversold and rs > 1.0 and market_trend != "Bajista":
+    if rsi < 30 and macd_cross_up and vol_increase and stoch_oversold and rs > 1.0:
         target_price = price * (1 + atr / price * 2)
         stop_loss = price * (1 - atr / price)
         rr_ratio = (target_price - price) / (price - stop_loss)
@@ -179,7 +180,7 @@ def suggest_action(indicators, currency, market_trend):
         else:
             print(f"{ticker}: RR insuficiente - {rr_ratio:.2f}")
     
-    if rsi > 70 and macd_cross_down and vol_increase and stoch_overbought and rs < 1.0 and market_trend != "Alcista":
+    if rsi > 70 and macd_cross_down and vol_increase and stoch_overbought and rs < 1.0:
         target_price = price * (1 - atr / price * 2)
         stop_loss = price * (1 + atr / price)
         rr_ratio = (price - target_price) / (stop_loss - price)
@@ -286,24 +287,26 @@ currency_cols = ['D']
 for col in currency_cols:
     data_sheet.format(f"{col}4:{col}{len(data_rows)+3}", {"numberFormat": {"type": "CURRENCY", "pattern": "#,##0.00"}})
 
-# Formato condicional usando add_conditional_format_rule
-data_sheet.add_conditional_format_rule(
-    ranges=["M4:M" + str(len(data_rows)+3)],
-    format={"backgroundColor": {"red": 0.9, "green": 0.9, "blue": 0.9}},
-    rule_type="CUSTOM_FORMULA",
-    rule_value="=FALSE"
-)
-data_sheet.add_conditional_format_rule(
-    ranges=["M4:M" + str(len(data_rows)+3)],
-    format={"textFormat": {"bold": True}, "backgroundColor": {"red": 0, "green": 1, "blue": 0}},
-    rule_type="TEXT_CONTAINS",
-    rule_value="Comprar"
-)
-data_sheet.add_conditional_format_rule(
-    ranges=["M4:M" + str(len(data_rows)+3)],
-    format={"textFormat": {"bold": True}, "backgroundColor": {"red": 1, "green": 0, "blue": 0}},
-    rule_type="TEXT_CONTAINS",
-    rule_value="Vender"
-)
+# Formato condicional usando gspread_formatting
+set_column_width(data_sheet, 'M', 200)  # Ajustar ancho para legibilidad
+set_column_width(data_sheet, 'N', 200)
+format_cell_range(data_sheet, "M4:M" + str(len(data_rows)+3), CellFormat(backgroundColor=Color(0.9, 0.9, 0.9)))
+conditional_format = [
+    ConditionalFormatRule(
+        ranges=[GridRange.from_a1_range("M4:M" + str(len(data_rows)+3))],
+        booleanRule=BooleanRule(
+            condition=BooleanCondition('TEXT_CONTAINS', ['Comprar']),
+            format=CellFormat(backgroundColor=Color(0, 1, 0), textFormat=TextFormat(bold=True))
+        )
+    ),
+    ConditionalFormatRule(
+        ranges=[GridRange.from_a1_range("M4:M" + str(len(data_rows)+3))],
+        booleanRule=BooleanRule(
+            condition=BooleanCondition('TEXT_CONTAINS', ['Vender']),
+            format=CellFormat(backgroundColor=Color(1, 0, 0), textFormat=TextFormat(bold=True))
+        )
+    )
+]
+set_conditional_format_rules(data_sheet, conditional_format)
 
 print("Google Sheet actualizado con éxito el", datetime.now(buenos_aires_tz).strftime("%Y-%m-%d %H:%M:%S"))
