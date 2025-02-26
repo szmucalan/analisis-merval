@@ -62,7 +62,7 @@ tickers_dict = {
     'PYPL': 'CEDEARs', 'PAGS': 'CEDEARs', 'SID': 'CEDEARs', 'AVGO': 'CEDEARs',
     'MORI.BA': 'Acciones del Panel General', 'META': 'CEDEARs', 'GOOG': 'CEDEARs',
     'QQQ': 'CEDEARs', 'AMZN': 'CEDEARs', 'AAPL': 'CEDEARs', 'NVDA': 'CEDEARs',
-    'NFLX': 'CEDEARs', 'UBER': 'CEDEARs', '^MERV': 'Índice'
+    'NFLX': 'CEDEARs', 'UBER': 'CEDEARs', '%5EMERV': 'Índice'
 }
 tickers = list(tickers_dict.keys())
 
@@ -121,9 +121,9 @@ def calculate_indicators(ticker_data, ticker):
     vol_increase = ticker_data['Volume'].iloc[-1] > vol_avg * 2.0
     vol_relative = ticker_data['Volume'].iloc[-1] / vol_avg if vol_avg > 0 else 1.0
     
-    if ticker != '^MERV' and not data['^MERV']['Close'].isna().all():
+    if ticker != '%5EMERV' and not data['%5EMERV']['Close'].isna().all():
         ticker_returns = (ticker_data['Close'].iloc[-1] / ticker_data['Close'].iloc[-20] - 1) if len(ticker_data) >= 20 else 0
-        merv_returns = (data['^MERV']['Close'].iloc[-1] / data['^MERV']['Close'].iloc[-20] - 1) if len(data['^MERV']) >= 20 else 0
+        merv_returns = (data['%5EMERV']['Close'].iloc[-1] / data['%5EMERV']['Close'].iloc[-20] - 1) if len(data['%5EMERV']) >= 20 else 0
         rs = ticker_returns / merv_returns if merv_returns != 0 else 1.0
     else:
         rs = 1.0
@@ -203,14 +203,14 @@ def get_trend(price, ema50, ema100):
         return "Neutral"
 
 # Tendencia del mercado (^MERV)
-market_data = data['^MERV'].dropna(how='all')
-market_indicators = calculate_indicators(market_data, '^MERV') if not market_data.empty else {'ema50': 0, 'ema100': 0, 'price': 0}
+market_data = data['%5EMERV'].dropna(how='all')
+market_indicators = calculate_indicators(market_data, '%5EMERV') if not market_data.empty else {'ema50': 0, 'ema100': 0, 'price': 0}
 market_trend = get_trend(market_indicators['price'], market_indicators['ema50'], market_indicators['ema100'])
 
 # Preparar datos para actualización masiva
 data_rows = []
 for ticker in tickers:
-    if ticker == '^MERV':
+    if ticker == '%5EMERV':
         continue
     try:
         ticker_data = data[ticker].dropna(how='all')
