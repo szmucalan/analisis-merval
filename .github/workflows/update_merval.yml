@@ -1,5 +1,9 @@
 name: Update Merval Sheet
 
+env:
+  IOL_USERNAME: ${{ secrets.IOL_USERNAME }}
+  IOL_PASSWORD: ${{ secrets.IOL_PASSWORD }}
+
 on:
   schedule:
     - cron: '0,15,30,45 14-21 * * 1-5'  # 11:00-18:00 ART
